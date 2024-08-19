@@ -184,7 +184,8 @@ components:
     # because a folder is specified, rather than a single file, we download just
     # the files we need, which in this case is just config.json and model.fp16.safetensors
     hf_repo: stabilityai/stable-diffusion-xl-base-1.0/text_encoder
-    variant: fp16
+    dtype: fp16
+	filetype: safetensors
     revision: main
   vae:
     # we specify a list of individual files contained in the same repo / folder
@@ -219,6 +220,10 @@ Interestingly, in workflow files, for these diffusers-pipeline definitions, we c
 I like using the term `diffusers pipeline` because it's more specific than just 'model'.
 
 - Note that we also want to provide progress-bars to clients as files are downloaded, so we can report what files are being downloaded and how long it'll be until they're complete.
+
+- We'll also want to specify file-types, specifically onnx versus safetensors mostly, in addition to dtypes. (I don't think we'll be using pickle-files.)
+
+- Note that a significant issue is that diffusers doesn't have sym-linking of components between repos, meaning that a single T5XXLEncoder might get downloaded multiple times, one for each repo.
 
 ### References:
 
