@@ -172,34 +172,32 @@ def download_diffusers_pipeline(
 ```
 The arguments, in a config.yml file, would look something like this:
 
-```yml
+```yaml
 repo_id: CompVis/stable-diffusion-v1-4
 revision: main
 model_index: path/to/model-index.json # overwrites base_repo's model-index file if specified
 
 components:
-	# unspecified components will use the base_repo as a source
-	# otherwise:
+  # unspecified components will use the base_repo as a source
+  # otherwise:
   text_encoder:
-	# because a folder is specified, rather than a single file, we download just
-	# the files we need, which in this case is just config.json and model.fp16.safetensors
+    # because a folder is specified, rather than a single file, we download just
+    # the files we need, which in this case is just config.json and model.fp16.safetensors
     hf_repo: stabilityai/stable-diffusion-xl-base-1.0/text_encoder
-	variant: fp16
-	revision: main
+    variant: fp16
+    revision: main
   vae:
-	# we specify a list of individual files contained in the same repo / folder
-    source: [
-		stabilityai/stable-diffusion-xl-base-1.0/vae/diffusion_pytorch_model.fp16.safetensors,
-		stabilityai/stable-diffusion-xl-base-1.0/vae/config.json
-	]
+    # we specify a list of individual files contained in the same repo / folder
+    source:
+      - stabilityai/stable-diffusion-xl-base-1.0/vae/diffusion_pytorch_model.fp16.safetensors
+      - stabilityai/stable-diffusion-xl-base-1.0/vae/config.json
     revision: main
   unet:
     local_path: /path/to/local/unet
   transformer:
-    urls: {
-		1234.safetensors: https://civitai.com/models/1234.safetensors, 
-		config.json: https://civitai.com/models/1234.json
-	}
+    urls:
+      1234.safetensors: https://civitai.com/models/1234.safetensors
+      config.json: https://civitai.com/models/1234.json
 ```
 
 Given how complex this components type is, we may want to create a class (struct) in order to represent all of this
