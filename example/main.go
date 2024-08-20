@@ -3,22 +3,8 @@
 
 package main
 
-import (
-	"github.com/seasonjs/hf-hub/api"
-)
+// import "github.com/cozy-creator/hf-hub/hub"
 
 func main() {
-	hapi, err := api.NewApi()
-	if err != nil {
-		print(err.Error())
-		return
-	}
-
-	modelPath, err := hapi.Model("bert-base-uncased").Get("config.json")
-	if err != nil {
-		print(err.Error())
-		return
-	}
-
-	print(modelPath)
+	// hub.Download("bert-base-uncased", "config.json")
 }
