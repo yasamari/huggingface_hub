@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
@@ -13,8 +14,8 @@ type HFClient struct {
 }
 
 type HfRepo struct {
-	RepoId   string
-	RepoType string
+	Id       string
+	Type     string
 	Revision string
 }
 
@@ -32,10 +33,19 @@ type HfFileMetadata struct {
 	Size       int
 }
 
+type HFModelInfo struct {
+	Sha      string               `json:"sha"`
+	Siblings []HFModelInfoSibling `json:"siblings"`
+}
+
+type HFModelInfoSibling struct {
+	RFileName string `json:"rfilename"`
+}
+
 const (
 	DefaultRevision  = "main"
 	DefaultCacheDir  = "/tmp/cozy-hub-cache"
-	DefaultUserAgent = "unkown/None; hf-hub/v0.0.1; rust/unknown"
+	DefaultUserAgent = "unknown/None; hf_hub/0.24.5; python/3.12.4; torch/2.4.0"
 )
 
 const (
@@ -92,9 +102,9 @@ func NewHFClient(endpoint string, token string, cacheDir string) *HFClient {
 
 func DefaultClient() *HFClient {
 	return &HFClient{
-		Endpoint: defaultHfEndpoint,
-		Token:    "",
-		CacheDir: DefaultCacheDir,
+		Endpoint:  defaultHfEndpoint,
+		CacheDir:  DefaultCacheDir,
+		UserAgent: DefaultUserAgent,
 	}
 }
 
@@ -102,18 +112,25 @@ func (r *HfRepo) File(fileName string) *HfFile {
 	return &HfFile{
 		Repo:     r,
 		FileName: fileName,
+		Revision: DefaultRevision,
 	}
 }
 
 func NewHfRepo(repoId string) *HfRepo {
 	return &HfRepo{
-		RepoId:   repoId,
+		Id:       repoId,
 		Revision: DefaultRevision,
+		Type:     ModelRepoType,
 	}
 }
 
 func (r *HfRepo) WithRevision(revision string) *HfRepo {
 	r.Revision = revision
+	return r
+}
+
+func (r *HfRepo) WithType(repoType string) *HfRepo {
+	r.Type = repoType
 	return r
 }
 
@@ -127,16 +144,44 @@ func (f *HfFile) WithRepo(repo *HfRepo) *HfFile {
 	return f
 }
 
+func (client *HFClient) WithCacheDir(cacheDir string) *HFClient {
+	client.CacheDir = cacheDir
+	return client
+}
+
+func (client *HFClient) WithEndpoint(endpoint string) *HFClient {
+	client.Endpoint = endpoint
+	return client
+}
+
+func (client *HFClient) WithToken(token string) *HFClient {
+	client.Token = token
+	return client
+}
+
+func (client *HFClient) WithUserAgent(userAgent string) *HFClient {
+	client.UserAgent = userAgent
+	return client
+}
+
 func (client *HFClient) FileDownload(file *HfFile, forceDownload bool, localFilesOnly bool) (string, error) {
 	if file.Revision == "" {
 		file.Revision = DefaultRevision
 	}
-	if file.Repo.RepoType == "" {
-		file.Repo.RepoType = ModelRepoType
+	if file.Repo.Type == "" {
+		file.Repo.Type = ModelRepoType
 	}
 	if client.CacheDir == "" {
 		client.CacheDir = DefaultCacheDir
 	}
 
 	return fileDownload(client, file, forceDownload, localFilesOnly)
+}
+
+func (client *HFClient) SnapshotDownload(repo *HfRepo, forceDownload bool, localFilesOnly bool) (string, error) {
+	if repo.Type != ModelRepoType {
+		return "", fmt.Errorf("invalid repo type: %s", repo.Type)
+	}
+
+	return snapshotDownload(client, repo, forceDownload, localFilesOnly)
 }

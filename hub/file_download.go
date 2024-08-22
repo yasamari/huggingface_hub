@@ -21,7 +21,6 @@ import (
 
 var symlinkSupported map[string]bool
 
-
 func IsSymlinkSupported(cacheDir string) (bool, error) {
 	if symlinkSupported != nil {
 		if _, ok := symlinkSupported[cacheDir]; ok {
@@ -113,7 +112,7 @@ func HttpGet(
 		headers["Range"] = fmt.Sprintf("bytes=%d-", resumeSize)
 	}
 
-	r, err := requestWrapper("GET", url, false, headers)
+	r, err := requestWrapper("GET", url, true, headers)
 	if err != nil {
 		return err
 	}
@@ -223,7 +222,9 @@ func requestWrapper(
 	followRelativeRedirects bool,
 	headers map[string]string,
 ) (*http.Response, error) {
+
 	// Recursively follow relative redirects
+
 	if followRelativeRedirects {
 		response, err := requestWrapper(method, rawUrl, false, headers)
 		if err != nil {
@@ -248,6 +249,7 @@ func requestWrapper(
 					Path:     parsedTarget.Path,
 					RawQuery: parsedTarget.RawQuery,
 				}
+
 				return requestWrapper(method, nextUrl.String(), true, headers)
 			}
 		}
@@ -358,9 +360,7 @@ func downloadToTmpAndMove(
 
 	fmt.Printf("Download complete. Moving file to %s\n", destinationPath)
 	os.Rename(incompletePath, destinationPath)
-
 	return nil
-
 }
 
 func copyNoMatterWhat(src string, dst string) {
@@ -422,13 +422,14 @@ func commonPath(path1, path2 string) string {
 }
 
 func createSymlink(src string, dst string, newBlob bool) error {
-	relativeSrc, err := filepath.Rel(dst, src)
+	relativeSrc, err := filepath.Rel(filepath.Dir(dst), src)
 	if err != nil {
 		relativeSrc = ""
 		return err
 	}
 
 	commonPath := commonPath(src, dst)
+
 	supportSymlinks, err := IsSymlinkSupported(commonPath)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
@@ -443,8 +444,7 @@ func createSymlink(src string, dst string, newBlob bool) error {
 
 	if supportSymlinks {
 		srcRelOrAbs := relativeSrc
-		fmt.Println("srcRelOrAbs>>", srcRelOrAbs)
-		fmt.Println("dst>>", dst)
+
 		err := os.Symlink(srcRelOrAbs, dst)
 		if err != nil {
 			if errors.Is(err, os.ErrExist) {
@@ -486,7 +486,6 @@ func repoFolderName(repoId string, repoType string) string {
 	repoParts := strings.Split(repoId, "/")
 	repo := append([]string{repoType + "s"}, repoParts...)
 
-	fmt.Println("odd", strings.Join(repo, "--"))
 	return strings.Join(repo, "--")
 }
 
@@ -523,8 +522,8 @@ func cacheCommitHashForSpecificRevision(storageFolder string, revision string, c
 
 func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFilesOnly bool) (string, error) {
 	fileName := file.FileName
-	repoId := file.Repo.RepoId
-	repoType := file.Repo.RepoType
+	repoId := file.Repo.Id
+	repoType := file.Repo.Type
 
 	if file.SubFolder != "" {
 		fileName = fmt.Sprintf("%s/%s", file.SubFolder, fileName)
@@ -535,17 +534,25 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 	}
 
 	repoFolderName := repoFolderName(repoId, repoType)
+	// absCacheDir, err := filepath.Abs(client.CacheDir)
+	// if err != nil {
+	// 	return "", err
+	// }
+
 	storageFolder := filepath.Join(client.CacheDir, repoFolderName)
+	err := os.MkdirAll(storageFolder, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+
 	snapshotPath := filepath.Join(storageFolder, "snapshots")
 
 	revision := file.Revision
 	if regexp.MustCompile(CommitHashPattern).MatchString(revision) {
 		pointerPath := filepath.Join(snapshotPath, revision, fileName)
 		_, err := os.Stat(pointerPath)
-		if err == nil {
-			if !forceDownload {
-				return pointerPath, nil
-			}
+		if err == nil && !forceDownload {
+			return pointerPath, nil
 		} else {
 			if !errors.Is(err, os.ErrNotExist) {
 				return "", err
@@ -553,9 +560,7 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 		}
 	}
 
-	headers := map[string]string{
-		"User-Agent": DefaultUserAgent,
-	}
+	headers := map[string]string{"User-Agent": client.UserAgent}
 	params := map[string]string{
 		"Endpoint": Endpoint,
 		"RepoId":   repoId,
@@ -574,8 +579,8 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 
 	if fileMetadata.CommitHash == "" {
 		url := fmt.Sprintf("https://huggingface.co/api/models/%s", repoId)
-		fmt.Println(url)
-		response, err := requestWrapper("GET", url, false, headers)
+
+		response, err := requestWrapper("GET", url, true, headers)
 		if err != nil {
 			return "", err
 		}
@@ -589,7 +594,6 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 
 		fileMetadata.CommitHash = data["sha"].(string)
 
-		// fmt.Println(data)
 		fmt.Println("No commit hash found for this file. It is likely that the file is not yet available on HF Hub.")
 	}
 
@@ -628,11 +632,18 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 			commitHash = fileMetadata.CommitHash
 		} else {
 			refPath := filepath.Join(storageFolder, "refs", revision)
-			content, err := os.ReadFile(refPath)
-			if err != nil {
+			_, err := os.Stat(refPath)
+			if err == nil {
+				content, err := os.ReadFile(refPath)
+				if err != nil {
+					return "", err
+				}
+				commitHash = string(content)
+			}
+
+			if !errors.Is(err, os.ErrNotExist) {
 				return "", err
 			}
-			commitHash = string(content)
 		}
 	}
 
@@ -647,8 +658,6 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 			return pointerPath, nil
 		}
 	}
-
-	fmt.Println(commitHash)
 
 	blobPath := filepath.Join(storageFolder, "blobs", fileMetadata.ETag)
 	pointerPath := filepath.Join(snapshotPath, commitHash, fileName)
@@ -687,15 +696,15 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 		return "", err
 	}
 
-	createSymlink(blobPath, pointerPath, true)
+	createSymlink(destinationPath, pointerPath, true)
 	return pointerPath, nil
 }
 
 func getFileMetadata(url string, headers map[string]string) (*HfFileMetadata, error) {
-	userAgent := fmt.Sprintf("unkown/None; %s/%s; rust/unknown", "hf-hub", "v0.0.1")
-	headers["User-Agent"] = userAgent
+	headers["User-Agent"] = DefaultUserAgent
+	headers["Accept-Encoding"] = "identity"
 
-	response, err := requestWrapper("HEAD", url, false, headers)
+	response, err := requestWrapper("HEAD", url, true, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -703,10 +712,14 @@ func getFileMetadata(url string, headers map[string]string) (*HfFileMetadata, er
 
 	commitHash := response.Header.Get("X-Repo-Commit")
 
+	fmt.Println("commitHash>>", commitHash)
+
 	etag := response.Header.Get("X-Linked-Etag")
 	if etag == "" {
 		etag = response.Header.Get("ETag")
 	}
+
+	fmt.Println("etag>>", etag)
 
 	sizeStr := response.Header.Get("X-Linked-Size")
 	if sizeStr == "" {

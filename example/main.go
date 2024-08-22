@@ -10,11 +10,12 @@ import (
 )
 
 func main() {
-	client := hub.DefaultClient()
+	client := hub.DefaultClient().WithCacheDir("./models")
 	repo := hub.NewHfRepo("black-forest-labs/FLUX.1-schnell")
 	file := repo.File("schnell_grid.jpeg").WithSubFolder("")
 
 	path, err := client.FileDownload(file, false, false)
+	// path, err := client.SnapshotDownload(repo, false, false)
 	if err != nil {
 		panic(err)
 	}
