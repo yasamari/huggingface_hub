@@ -3,8 +3,21 @@
 
 package main
 
-// import "github.com/cozy-creator/hf-hub/hub"
+import (
+	"fmt"
+
+	"github.com/cozy-creator/hf-hub/hub"
+)
 
 func main() {
-	// hub.Download("bert-base-uncased", "config.json")
+	client := hub.DefaultClient()
+	repo := hub.NewHfRepo("black-forest-labs/FLUX.1-schnell")
+	file := repo.File("schnell_grid.jpeg").WithSubFolder("")
+
+	path, err := client.FileDownload(file, false, false)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(path)
 }
