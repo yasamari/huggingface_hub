@@ -16,6 +16,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/cozy-creator/hf-hub/hub/utils"
 	"github.com/gofrs/flock"
 	"github.com/schollz/progressbar/v3"
 )
@@ -288,14 +289,23 @@ func downloadToTmpAndMove(incompletePath, destinationPath, downloadUrl string, h
 
 	if expectedSize != 0 {
 		// Check disk space in both tmp and destination path
-		err = checkDiskSpace(expectedSize, incompletePath)
+		incompletePathDir := filepath.Dir(incompletePath)
+		size, err := utils.GetAvailableDiskSpace(incompletePathDir)
+		if err != nil {
+			return err
+		}
+		if expectedSize > 0 && size < uint64(expectedSize) {
+			return fmt.Errorf("not enough free disk space to download the file. The expected file size is: %d MB. The target location %s only has %d MB free disk space", expectedSize/1000000, incompletePathDir, size/1000000)
+		}
+
+		destinationPathDir := filepath.Dir(destinationPath)
+		size, err = utils.GetAvailableDiskSpace(destinationPathDir)
 		if err != nil {
 			return err
 		}
 
-		err = checkDiskSpace(expectedSize, destinationPath)
-		if err != nil {
-			return err
+		if expectedSize > 0 && size < uint64(expectedSize) {
+			return fmt.Errorf("not enough free disk space to download the file. The expected file size is: %d MB. The target location %s only has %d MB free disk space", expectedSize/1000000, destinationPathDir, size/10666)
 		}
 	}
 

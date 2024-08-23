@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cozy-creator/hf-hub/hub/utils"
 )
 
 func isOfflineError(err error) bool {
@@ -69,7 +71,7 @@ func isSymlinkSupported(cacheDir string) (bool, error) {
 	}()
 
 	fullDstPath := filepath.Join(cacheDir, "dst_test")
-	err = os.Symlink(fullSrcPath, fullDstPath)
+	err = utils.CreateSymlink(fullSrcPath, fullDstPath)
 	if err != nil {
 		return false, err
 	}
@@ -81,51 +83,6 @@ func isSymlinkSupported(cacheDir string) (bool, error) {
 
 	symlinkSupported[cacheDir] = true
 	return true, nil
-}
-
-func getDiskSpace(path string) (uint64, error) {
-
-	// if runtime.GOOS != "darwin" || runtime.GOARCH != "windows" {
-	// 	var stat syscall.Statfs_t
-	// 	err := syscall.Statfs(path, &stat)
-	// 	if err != nil {
-	// 		return 0, err
-	// 	}
-
-	// 	return stat.Bavail * uint64(stat.Bsize), nil
-	// } else {
-	// 	// On Windows, we can use the GetDiskFreeSpaceEx and mac function to get the available space
-	// 	// https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceex
-	// 	var freeBytesAvailable uint64
-	// 	err := syscall.GetDiskFreeSpaceEx(syscall.UTF16PtrFromString(path), nil, &freeBytesAvailable, nil, nil)
-	// 	if err != nil {
-	// 		return 0, err
-	// 	}
-	// 	return freeBytesAvailable, nil
-	// }
-
-	return 0, nil
-}
-
-func checkDiskSpace(expectedSize int, targetDir string) error {
-	// targetDir = filepath.Dir(targetDir)
-	// for _, path := range []string{targetDir, filepath.Dir(targetDir)} {
-
-	// 	// Calculate available space (in bytes)
-	// 	available := stat.Bavail * uint64(stat.Bsize)
-	// 	if available < int64(expectedSize) {
-	// 		return fmt.Errorf(
-	// 			"not enough free disk space to download the file. The expected file size is: %d MB. The target location %s only has %d MB free disk space",
-	// 			expectedSize/1000000, targetDir, available/1000000,
-	// 		)
-	// 	}
-	// }
-
-	// if _, err := os.Stat(targetDir); os.IsNotExist(err) {
-	// 	return fmt.Errorf("targetDir %s does not exist", targetDir)
-	// }
-
-	return nil
 }
 
 func commonPath(path1, path2 string) string {
@@ -167,19 +124,9 @@ func createSymlink(src string, dst string, newBlob bool) error {
 	if supportSymlinks {
 		srcRelOrAbs := relativeSrc
 
-		err := os.Symlink(srcRelOrAbs, dst)
+		err := utils.CreateSymlink(srcRelOrAbs, dst)
 		if err != nil {
 			if errors.Is(err, os.ErrExist) {
-				// if os.PathIsSymlink(dst) && os.Readlink(dst) == src {
-				// 	// `dst` already exists and is a symlink to the `src` blob. It is most likely that the file has
-				// 	// been cached twice concurrently (exactly between `os.remove` and `os.symlink`). Do nothing.
-				// 	return nil
-				// } else {
-				// 	// Very unlikely to happen. Means a file `dst` has been created exactly between `os.remove` and
-				// 	// `os.symlink` and is not a symlink to the `src` blob file. Raise exception.
-				// 	return err
-				// }
-
 				return nil
 			} else {
 				if newBlob {
