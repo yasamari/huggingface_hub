@@ -21,45 +21,6 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
-func (c *HFClient) GetHubFileUrl(file *HfFile) (string, error) {
-	var fileName string
-	if file.SubFolder != "" {
-		fileName = fmt.Sprintf("%s/%s", file.SubFolder, file.FileName)
-	}
-
-	var repoId string
-	repoType := file.Repo.Type
-	if repoType != "" {
-		repoTypePrefix, ok := RepoTypesUrlPrefixes[repoType]
-		if !ok {
-			return "", fmt.Errorf("invalid repo type: %s", repoType)
-		}
-
-		repoId = fmt.Sprintf("%s%s", repoTypePrefix, repoId)
-	}
-
-	var revision string
-	if revision == "" {
-		revision = DefaultRevision
-	}
-
-	url, err := formatUrl(
-		hfModelInfoTemplate,
-		map[string]string{
-			"RepoId":   repoId,
-			"Revision": revision,
-			"Filename": fileName,
-			"Endpoint": c.Endpoint,
-		},
-	)
-
-	if err != nil {
-		return "", err
-	}
-
-	return url, err
-}
-
 func downloadFileStream(url string, incompleteFile *os.File, resumeSize int64, headers *http.Header, expectedSize int64, displayedFilename string, nbRetries int) error {
 	currentHeaders := headers.Clone()
 	if resumeSize > 0 {
@@ -357,13 +318,14 @@ func cacheCommitHashForSpecificRevision(storageFolder string, revision string, c
 
 }
 
-func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFilesOnly bool) (string, error) {
-	fileName := file.FileName
-	repoId := file.Repo.Id
-	repoType := file.Repo.Type
+func fileDownload(client *Client, params *DownloadParams) (string, error) {
+	repoId := params.Repo.Id
+	fileName := params.FileName
+	repoType := params.Repo.Type
+	forceDownload := params.ForceDownload
 
-	if file.SubFolder != "" {
-		fileName = fmt.Sprintf("%s/%s", file.SubFolder, fileName)
+	if params.SubFolder != "" {
+		fileName = fmt.Sprintf("%s/%s", params.SubFolder, fileName)
 	}
 
 	if repoType != SpaceRepoType && repoType != DatasetRepoType && repoType != ModelRepoType {
@@ -379,7 +341,7 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 
 	snapshotPath := filepath.Join(storageFolder, "snapshots")
 
-	revision := file.Revision
+	revision := params.Revision
 	if regexp.MustCompile(CommitHashPattern).MatchString(revision) {
 		pointerPath := filepath.Join(snapshotPath, revision, fileName)
 		_, err := os.Stat(pointerPath)
@@ -395,13 +357,13 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 	headers := &http.Header{}
 	headers.Set("User-Aget", client.UserAgent)
 
-	params := map[string]string{
+	urlParams := map[string]string{
 		"Endpoint": client.Endpoint,
 		"RepoId":   repoId,
 		"Revision": revision,
 		"Filename": fileName,
 	}
-	hfResolveUrl, err := formatUrl(hfResolveUrlTemplate, params)
+	hfResolveUrl, err := formatUrl(hfResolveUrlTemplate, urlParams)
 	if err != nil {
 		return "", err
 	}
@@ -455,7 +417,7 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 		}
 	}
 
-	if !(localFilesOnly || fileMetadata.ETag != "") {
+	if !(params.LocalFilesOnly || fileMetadata.ETag != "") {
 		return "", fmt.Errorf("error while retrieving file metadata: %s", err)
 	}
 
@@ -552,12 +514,12 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 	return pointerPath, nil
 }
 
-func getFileMetadata(url string, headers *http.Header) (*HfFileMetadata, error) {
+func getFileMetadata(url string, headers *http.Header) (*FileMetadata, error) {
 	headers.Set("Accept-Encoding", "identity")
 	response, err := requestWrapper("HEAD", url, false, true, headers)
 
 	if response.StatusCode >= 400 {
-		m := &HfFileMetadata{
+		m := &FileMetadata{
 			CommitHash: response.Header.Get("X-Repo-Commit"),
 		}
 
@@ -593,7 +555,7 @@ func getFileMetadata(url string, headers *http.Header) (*HfFileMetadata, error) 
 		location = response.Request.URL.String()
 	}
 
-	return &HfFileMetadata{
+	return &FileMetadata{
 		Size:       size,
 		Location:   location,
 		CommitHash: commitHash,

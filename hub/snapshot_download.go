@@ -11,10 +11,13 @@ import (
 	"sync"
 )
 
-func snapshotDownload(client *HFClient, repo *HfRepo, forceDownload bool, localFilesOnly bool) (string, error) {
+func snapshotDownload(client *Client, params *DownloadParams) (string, error) {
+	repo := params.Repo
+	localFilesOnly := params.LocalFilesOnly
+
 	wg := sync.WaitGroup{}
 	var (
-		modelInfo *HFModelInfo
+		modelInfo *ModelInfo
 		err       error
 	)
 
@@ -94,7 +97,15 @@ func snapshotDownload(client *HFClient, repo *HfRepo, forceDownload bool, localF
 	download := func(fileName string) {
 		wg.Add(1)
 		defer wg.Done()
-		fileDownload(client, repo.File(fileName), forceDownload, localFilesOnly)
+		fileParams := &DownloadParams{
+			Repo:           repo,
+			FileName:       fileName,
+			Revision:       params.Revision,
+			ForceDownload:  params.ForceDownload,
+			LocalFilesOnly: params.LocalFilesOnly,
+		}
+
+		fileDownload(client, fileParams)
 	}
 
 	for _, sibling := range modelInfo.Siblings {
@@ -105,7 +116,7 @@ func snapshotDownload(client *HFClient, repo *HfRepo, forceDownload bool, localF
 	return snapshotFolder, nil
 }
 
-func (c *HFClient) getModelInfo(repo *HfRepo) (*HFModelInfo, error) {
+func (c *Client) getModelInfo(repo *Repo) (*ModelInfo, error) {
 	headers := &http.Header{}
 	headers.Set("User-Agent", DefaultUserAgent)
 
@@ -147,7 +158,7 @@ func (c *HFClient) getModelInfo(repo *HfRepo) (*HFModelInfo, error) {
 	}
 	defer response.Body.Close()
 
-	var data = &HFModelInfo{}
+	var data = &ModelInfo{}
 	err = json.NewDecoder(response.Body).Decode(&data)
 	if err != nil {
 		return nil, err
