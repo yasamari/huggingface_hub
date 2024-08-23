@@ -243,15 +243,15 @@ func downloadToTmpAndMove(incompletePath, destinationPath, downloadUrl string, h
 	}
 
 	_, err := os.Stat(incompletePath)
-	if err == nil && forceDownload {
+	if err == nil {
 		// By default, we will try to resume the download if possible.
-		// However, if the user has set `force_download=True` or if `hf_transfer` is enabled, then we should
-		// not resume the download => delete the incomplete file.
+		// However, if the user has set `force_download=True`, we should not resume the download => delete the incomplete file.
 		message := fmt.Sprintf("Removing incomplete file '%s'", incompletePath)
 		if forceDownload {
 			message += " (force_download=True)"
 		}
-		fmt.Println(message)
+
+		log.Println(message)
 		os.Remove(incompletePath)
 	}
 
@@ -264,7 +264,7 @@ func downloadToTmpAndMove(incompletePath, destinationPath, downloadUrl string, h
 				message += " (force_download=True)"
 			}
 
-			fmt.Println(message)
+			log.Println(message)
 			os.Remove(incompletePath)
 		}
 	}
@@ -284,7 +284,7 @@ func downloadToTmpAndMove(incompletePath, destinationPath, downloadUrl string, h
 	if resumeSize > 0 && expectedSize != 0 {
 		message += fmt.Sprintf(" (resume from %d/%d)", resumeSize, expectedSize)
 	}
-	fmt.Println(message)
+	log.Println(message)
 
 	if expectedSize != 0 {
 		// Check disk space in both tmp and destination path
@@ -305,7 +305,6 @@ func downloadToTmpAndMove(incompletePath, destinationPath, downloadUrl string, h
 		return err
 	}
 
-	fmt.Printf("Download complete. Moving file to %s\n", destinationPath)
 	os.Rename(incompletePath, destinationPath)
 	return nil
 }
@@ -557,7 +556,6 @@ func getFileMetadata(url string, headers *http.Header) (*HfFileMetadata, error) 
 		return m, fmt.Errorf(errorTemplate, url, errorCode)
 	}
 
-	fmt.Println(response.Body)
 	if err != nil {
 		return nil, err
 	}
