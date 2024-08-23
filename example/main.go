@@ -4,21 +4,22 @@
 package main
 
 import (
-	"github.com/seasonjs/hf-hub/api"
+	"fmt"
+	"log"
+
+	"github.com/cozy-creator/hf-hub/hub"
 )
 
 func main() {
-	hapi, err := api.NewApi()
+	client := hub.DefaultClient().WithCacheDir("./models")
+	repo := hub.NewHfRepo("black-forest-labs/FLUX.1-schnell")
+	file := repo.File("schnell_grid.jpeg")
+
+	path, err := client.FileDownload(file, true, false)
+	// path, err := client.SnapshotDownload(repo, false, false)
 	if err != nil {
-		print(err.Error())
-		return
+		log.Println(err)
 	}
 
-	modelPath, err := hapi.Model("bert-base-uncased").Get("config.json")
-	if err != nil {
-		print(err.Error())
-		return
-	}
-
-	print(modelPath)
+	fmt.Println(path)
 }
