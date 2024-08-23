@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/cozy-creator/hf-hub/hub"
 )
@@ -12,12 +13,12 @@ import (
 func main() {
 	client := hub.DefaultClient().WithCacheDir("./models")
 	repo := hub.NewHfRepo("black-forest-labs/FLUX.1-schnell")
-	file := repo.File("schnell_grid.jpeg").WithSubFolder("")
+	file := repo.File("schnell_grid.jpeg")
 
-	path, err := client.FileDownload(file, false, false)
+	path, err := client.FileDownload(file, true, false)
 	// path, err := client.SnapshotDownload(repo, false, false)
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 
 	fmt.Println(path)

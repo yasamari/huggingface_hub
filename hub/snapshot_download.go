@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,14 +13,24 @@ import (
 
 func snapshotDownload(client *HFClient, repo *HfRepo, forceDownload bool, localFilesOnly bool) (string, error) {
 	wg := sync.WaitGroup{}
-	modelInfo, err := getModelInfo(repo)
-	if err != nil && !isOfflineError(err) {
-		return "", err
+	var (
+		modelInfo *HFModelInfo
+		err       error
+	)
+
+	if !localFilesOnly {
+		modelInfo, err = client.getModelInfo(repo)
+		if err != nil && !isOfflineError(err) {
+			return "", err
+		}
 	}
 
 	storageFolder := filepath.Join(client.CacheDir, repoFolderName(repo.Id, repo.Type))
-
 	var commitHash string
+
+	// modelInfo == nil means localFilesOnly is set to true or we're offline, so we cannot download the model.
+	// instead, we'll try to get the commit hash, and reolve a cached snapshot of the repo.
+	// if we can't find it, we'll return an error.
 	if modelInfo == nil {
 		if regexp.MustCompile(CommitHashPattern).MatchString(repo.Revision) {
 			commitHash = repo.Revision
@@ -49,6 +60,7 @@ func snapshotDownload(client *HFClient, repo *HfRepo, forceDownload bool, localF
 		}
 	}
 
+	// we're using localFilesOnly and we cannot find a cached snapshot folder for the specified revision. so we return an error.
 	if localFilesOnly {
 		return "", fmt.Errorf(
 			"cannot find an appropriate cached snapshot folder for the specified revision on the local disk and outgoing traffic has been disabled. To enable repo look-ups and downloads online, set localFilesOnly to false",
@@ -90,27 +102,46 @@ func snapshotDownload(client *HFClient, repo *HfRepo, forceDownload bool, localF
 	}
 
 	wg.Wait()
-
 	return snapshotFolder, nil
 }
 
-func getModelInfo(repo *HfRepo) (*HFModelInfo, error) {
-	headers := map[string]string{
-		"User-Agent": DefaultUserAgent,
-	}
+func (c *HFClient) getModelInfo(repo *HfRepo) (*HFModelInfo, error) {
+	headers := &http.Header{}
+	headers.Set("User-Agent", DefaultUserAgent)
 
 	if repo.Type != ModelRepoType {
 		return nil, fmt.Errorf("invalid repo type: %s", repo.Type)
 	}
 
-	var url string
+	var (
+		modelInfoUrl string
+		err          error
+	)
+
 	if repo.Revision != "" {
-		url = fmt.Sprintf("https://huggingface.co/api/models/%s/revision/%s", repo.Id, repo.Revision)
+		modelInfoUrl, err = formatUrl(
+			hfModelRevisionInfoTemplate,
+			map[string]string{
+				"Endpoint": c.Endpoint,
+				"RepoId":   repo.Id,
+				"Revision": repo.Revision,
+			},
+		)
 	} else {
-		url = fmt.Sprintf("https://huggingface.co/api/models/%s", repo.Id)
+		modelInfoUrl, err = formatUrl(
+			hfModelRevisionInfoTemplate,
+			map[string]string{
+				"Endpoint": c.Endpoint,
+				"RepoId":   repo.Id,
+			},
+		)
 	}
 
-	response, err := requestWrapper("GET", url, false, headers)
+	if err != nil {
+		return nil, err
+	}
+
+	response, err := requestWrapper("GET", modelInfoUrl, false, true, headers)
 	if err != nil {
 		return nil, err
 	}

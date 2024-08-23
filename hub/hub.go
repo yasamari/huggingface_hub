@@ -45,7 +45,7 @@ type HFModelInfoSibling struct {
 const (
 	DefaultRevision  = "main"
 	DefaultCacheDir  = "/tmp/cozy-hub-cache"
-	DefaultUserAgent = "unknown/None; hf_hub/0.24.5; python/3.12.4; torch/2.4.0"
+	DefaultUserAgent = "unknown/None; hf-hub/0.0.1"
 )
 
 const (
@@ -55,9 +55,11 @@ const (
 )
 
 const (
-	defaultHfEndpoint        = "https://huggingface.co"
-	defaultHfStagingEndpoint = "https://hub-ci.huggingface.co"
-	hfUrlTemplate            = "{{.Endpoint}}/{{.RepoId}}/resolve/{{.Revision}}/{{.Filename}}"
+	defaultHfEndpoint           = "https://huggingface.co"
+	defaultHfStagingEndpoint    = "https://hub-ci.huggingface.co"
+	hfResolveUrlTemplate        = "{{.Endpoint}}/{{.RepoId}}/resolve/{{.Revision}}/{{.Filename}}"
+	hfModelInfoTemplate         = "{{.Endpoint}}/api/models/{{.RepoId}}"
+	hfModelRevisionInfoTemplate = "{{.Endpoint}}/api/models/{{.RepoId}}/revision/{{.Revision}}"
 )
 
 const (
@@ -66,15 +68,18 @@ const (
 )
 
 var IsStaging bool
-var Endpoint = os.Getenv("HF_ENDPOINT")
+var HFEndpoint = os.Getenv("HF_ENDPOINT")
 
 const DownloadChunkSize = 1024 * 1024
+const DefaultRetries = 5
 
 var RepoTypes = []string{ModelRepoType, SpaceRepoType, DatasetRepoType}
 var RepoTypesUrlPrefixes = map[string]string{
 	SpaceRepoType:   "spaces/",
 	DatasetRepoType: "datasets/",
 }
+
+var symlinkSupported map[string]bool
 
 func init() {
 	isStaging, err := strconv.ParseBool(os.Getenv("HUGGINGFACE_CO_STAGING"))
@@ -83,11 +88,11 @@ func init() {
 	}
 
 	IsStaging = isStaging
-	if Endpoint == "" {
+	if HFEndpoint == "" {
 		if isStaging {
-			Endpoint = defaultHfStagingEndpoint
+			HFEndpoint = defaultHfStagingEndpoint
 		} else {
-			Endpoint = defaultHfEndpoint
+			HFEndpoint = defaultHfEndpoint
 		}
 	}
 }
@@ -102,7 +107,7 @@ func NewHFClient(endpoint string, token string, cacheDir string) *HFClient {
 
 func DefaultClient() *HFClient {
 	return &HFClient{
-		Endpoint:  defaultHfEndpoint,
+		Endpoint:  HFEndpoint,
 		CacheDir:  DefaultCacheDir,
 		UserAgent: DefaultUserAgent,
 	}
@@ -112,15 +117,15 @@ func (r *HfRepo) File(fileName string) *HfFile {
 	return &HfFile{
 		Repo:     r,
 		FileName: fileName,
-		Revision: DefaultRevision,
+		Revision: r.Revision,
 	}
 }
 
 func NewHfRepo(repoId string) *HfRepo {
 	return &HfRepo{
 		Id:       repoId,
-		Revision: DefaultRevision,
 		Type:     ModelRepoType,
+		Revision: DefaultRevision,
 	}
 }
 
@@ -141,6 +146,7 @@ func (f *HfFile) WithSubFolder(subFolder string) *HfFile {
 
 func (f *HfFile) WithRepo(repo *HfRepo) *HfFile {
 	f.Repo = repo
+	f.Revision = repo.Revision
 	return f
 }
 

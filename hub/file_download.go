@@ -2,10 +2,10 @@ package hub
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,54 +16,18 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/schollz/progressbar/v3"
 )
 
-var symlinkSupported map[string]bool
-
-func IsSymlinkSupported(cacheDir string) (bool, error) {
-	if symlinkSupported != nil {
-		if _, ok := symlinkSupported[cacheDir]; ok {
-			return true, nil
-		}
+func (c *HFClient) GetHubFileUrl(file *HfFile) (string, error) {
+	var fileName string
+	if file.SubFolder != "" {
+		fileName = fmt.Sprintf("%s/%s", file.SubFolder, file.FileName)
 	}
 
-	srcPath := "src_test"
-	dstPath := "dst_test"
-
-	if cacheDir == "" {
-		cacheDir = DefaultCacheDir
-	}
-
-	fullSrcPath := filepath.Join(cacheDir, srcPath)
-	file, err := os.Create(fullSrcPath)
-	if err != nil {
-		return false, err
-	}
-
-	defer file.Close()
-	defer os.Remove(fullSrcPath)
-
-	fullDstPath := filepath.Join(cacheDir, dstPath)
-	err = os.Symlink(fullSrcPath, fullDstPath)
-	if err != nil {
-		return false, err
-	}
-	defer os.Remove(fullDstPath)
-
-	if symlinkSupported == nil {
-		symlinkSupported = make(map[string]bool)
-	}
-
-	symlinkSupported[cacheDir] = true
-	return true, nil
-}
-
-func HfHubUrl(repoId string, filename string, subfolder string, repoType string, revision string, endpoint string) (string, error) {
-	if subfolder != "" {
-		filename = fmt.Sprintf("%s/%s", subfolder, filename)
-	}
-
+	var repoId string
+	repoType := file.Repo.Type
 	if repoType != "" {
 		repoTypePrefix, ok := RepoTypesUrlPrefixes[repoType]
 		if !ok {
@@ -73,77 +37,67 @@ func HfHubUrl(repoId string, filename string, subfolder string, repoType string,
 		repoId = fmt.Sprintf("%s%s", repoTypePrefix, repoId)
 	}
 
+	var revision string
 	if revision == "" {
 		revision = DefaultRevision
 	}
 
-	url, err := formatHfUrl(
+	url, err := formatUrl(
+		hfModelInfoTemplate,
 		map[string]string{
-			"Endpoint": Endpoint,
 			"RepoId":   repoId,
 			"Revision": revision,
-			"Filename": filename,
+			"Filename": fileName,
+			"Endpoint": c.Endpoint,
 		},
 	)
 
 	if err != nil {
 		return "", err
 	}
+
 	return url, err
 }
 
-func HttpGet(
-	url string,
-	tempFile *os.File,
-	resumeSize int64,
-	headers map[string]string,
-	expectedSize int64,
-	displayedFilename string,
-	nbRetries int,
-	bar *progressbar.ProgressBar,
-) error {
-	initialHeaders := headers
-	headers = make(map[string]string)
-	for k, v := range initialHeaders {
-		headers[k] = v
-	}
-
+func downloadFileStream(url string, incompleteFile *os.File, resumeSize int64, headers *http.Header, expectedSize int64, displayedFilename string, nbRetries int) error {
+	currentHeaders := headers.Clone()
 	if resumeSize > 0 {
-		headers["Range"] = fmt.Sprintf("bytes=%d-", resumeSize)
+		currentHeaders.Set("Range", fmt.Sprintf("bytes=%d-", resumeSize))
 	}
 
-	r, err := requestWrapper("GET", url, true, headers)
-	if err != nil {
-		return err
-	}
-	defer r.Body.Close()
-
-	_, err = tempFile.Seek(resumeSize, io.SeekStart)
-	if err != nil {
-		return err
-	}
-
-	contentLength, err := strconv.Atoi(r.Header.Get("Content-Length"))
+	r, err := requestWrapper("GET", url, true, true, &currentHeaders)
 	if err != nil {
 		if nbRetries <= 0 {
 			return fmt.Errorf("error while downloading from %s: %s\nMax retries exceeded", url, err)
 		}
 
 		if errors.Is(err, http.ErrHandlerTimeout) {
-			fmt.Printf("error while downloading from %s: %s\nTrying to resume download...\n", url, err)
+			log.Printf("error while downloading from %s: %s\nTrying to resume download...\n", url, err)
 			time.Sleep(1 * time.Second)
-			return HttpGet(url, tempFile, resumeSize, initialHeaders, expectedSize, displayedFilename, nbRetries-1, bar)
+			return downloadFileStream(url, incompleteFile, resumeSize, headers, expectedSize, displayedFilename, nbRetries-1)
 		}
 
 		return err
 	}
+	defer r.Body.Close()
 
-	// NOTE: 'total' is the total number of bytes to download, not the number of bytes in the file.
-	//       If the file is compressed, the number of bytes in the saved file will be higher than 'total'.
-	total := resumeSize + int64(contentLength)
-	if total != expectedSize {
-		return fmt.Errorf("expected size %d does not match actual size %d", expectedSize, total)
+	// move to the position where we left off
+	_, err = incompleteFile.Seek(resumeSize, io.SeekStart)
+	if err != nil {
+		return err
 	}
+
+	contentLength, err := strconv.Atoi(r.Header.Get("Content-Length"))
+	if err != nil {
+		return err
+	}
+
+	// NOTE: 'totalBytes' is the totalBytes number of bytes to download, not the number of bytes in the file.
+	//       If the file is compressed, the number of bytes in the saved file will be higher than 'totalBytes'.
+	totalBytes := resumeSize + int64(contentLength)
+	// if totalBytes != expectedSize {
+	// 	return fmt.Errorf("expected size %d does not match actual size %d", expectedSize, totalBytes)
+	// }
 
 	if displayedFilename == "" {
 		displayedFilename = url
@@ -162,10 +116,10 @@ func HttpGet(
 		displayedFilename = fmt.Sprintf("(…)%s", displayedFilename[len(displayedFilename)-40:])
 	}
 
-	consistencyErrorMessage := fmt.Sprintf("Consistency check failed: file should be of size %d but has size %d (%s). We are sorry for the inconvenience. Please retry with `force_download=True`. If the issue persists, please let us know by opening an issue on https://github.com/huggingface/huggingface_hub.", expectedSize, 0 /*/*tempFile.Tell()*/, displayedFilename)
+	consistencyErrorMessage := fmt.Sprintf("Consistency check failed: file should be of size %d but has size %d (%s). We are sorry for the inconvenience. Please retry with `force_download=True`. If the issue persists, please let us know by opening an issue on https://github.com/huggingface/huggingface_hub.", expectedSize, 0 /*/*incompleteFile.Tell()*/, displayedFilename)
 
-	bar.ChangeMax64(total)
-	bar.Set64(resumeSize)
+	progressbar := progressbar.DefaultBytes(totalBytes)
+	progressbar.Set64(resumeSize)
 
 	newResumeSize := resumeSize
 	for {
@@ -184,11 +138,11 @@ func HttpGet(
 
 		if n > 0 {
 			// Write the actual bytes read to the file
-			if _, writeErr := tempFile.Write(buf[:n]); writeErr != nil {
+			if _, writeErr := incompleteFile.Write(buf[:n]); writeErr != nil {
 				return fmt.Errorf("error writing to file: %v", writeErr)
 			}
 
-			bar.Add64(int64(n))
+			progressbar.Add64(int64(n))
 			newResumeSize += int64(n)
 
 			// Some data has been downloaded from the server so we reset the number of retries.
@@ -202,8 +156,8 @@ func HttpGet(
 	return nil
 }
 
-func formatHfUrl(params map[string]string) (string, error) {
-	tmpl, err := template.New("url").Parse(hfUrlTemplate)
+func formatUrl(urlTemplate string, params map[string]string) (string, error) {
+	tmpl, err := template.New("url").Parse(urlTemplate)
 	if err != nil {
 		return "", err
 	}
@@ -217,16 +171,14 @@ func formatHfUrl(params map[string]string) (string, error) {
 }
 
 func requestWrapper(
-	method string,
+	method,
 	rawUrl string,
+	allowRedirects,
 	followRelativeRedirects bool,
-	headers map[string]string,
+	headers *http.Header,
 ) (*http.Response, error) {
-
-	// Recursively follow relative redirects
-
 	if followRelativeRedirects {
-		response, err := requestWrapper(method, rawUrl, false, headers)
+		response, err := requestWrapper(method, rawUrl, allowRedirects, false, headers)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +202,7 @@ func requestWrapper(
 					RawQuery: parsedTarget.RawQuery,
 				}
 
-				return requestWrapper(method, nextUrl.String(), true, headers)
+				return requestWrapper(method, nextUrl.String(), allowRedirects, true, headers)
 			}
 		}
 	}
@@ -260,17 +212,23 @@ func requestWrapper(
 		err      error = nil
 	)
 
-	req, err := http.NewRequest(method, rawUrl, nil)
+	request, err := http.NewRequest(method, rawUrl, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	client := &http.Client{}
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	if !allowRedirects {
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
 	}
 
-	response, err = client.Do(req)
+	if headers != nil {
+		request.Header = *headers
+	}
+
+	response, err = client.Do(request)
 	if err != nil {
 		return nil, err
 	}
@@ -278,15 +236,7 @@ func requestWrapper(
 	return response, nil
 }
 
-func downloadToTmpAndMove(
-	incompletePath,
-	destinationPath,
-	urlToDownload string,
-	headers map[string]string,
-	expectedSize int,
-	filename string,
-	forceDownload bool,
-) error {
+func downloadToTmpAndMove(incompletePath, destinationPath, downloadUrl string, headers *http.Header, expectedSize int, filename string, forceDownload bool) error {
 	if _, err := os.Stat(destinationPath); err == nil && !forceDownload {
 		// Do nothing if already exists (except if force_download=True)
 		return nil
@@ -319,14 +269,14 @@ func downloadToTmpAndMove(
 		}
 	}
 
-	f, err := os.OpenFile(incompletePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	incompleteFile, err := os.OpenFile(incompletePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return err
 	}
 
-	defer f.Close()
+	defer incompleteFile.Close()
 
-	resumeSize, err := f.Seek(0, io.SeekEnd)
+	resumeSize, err := incompleteFile.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
 	}
@@ -338,148 +288,26 @@ func downloadToTmpAndMove(
 
 	if expectedSize != 0 {
 		// Check disk space in both tmp and destination path
-		checkDiskSpace(expectedSize, incompletePath)
-		checkDiskSpace(expectedSize, destinationPath)
+		err = checkDiskSpace(expectedSize, incompletePath)
+		if err != nil {
+			return err
+		}
+
+		err = checkDiskSpace(expectedSize, destinationPath)
+		if err != nil {
+			return err
+		}
 	}
 
-	bar := progressbar.Default(int64(expectedSize))
-	err = HttpGet(
-		urlToDownload,
-		f,
-		resumeSize,
-		headers,
-		int64(expectedSize),
-		filename,
-		5,
-		bar,
-	)
+	err = downloadFileStream(downloadUrl, incompleteFile, resumeSize, headers, int64(expectedSize), filename, DefaultRetries)
 
 	if err != nil {
-		fmt.Println(err)
+		return err
 	}
 
 	fmt.Printf("Download complete. Moving file to %s\n", destinationPath)
 	os.Rename(incompletePath, destinationPath)
 	return nil
-}
-
-func copyNoMatterWhat(src string, dst string) {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		panic(err)
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		panic(err)
-	}
-	defer dstFile.Close()
-
-	_, err = io.Copy(dstFile, srcFile)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func checkDiskSpace(expectedSize int, targetDir string) error {
-	targetDir = filepath.Dir(targetDir)
-	for _, path := range []string{targetDir, filepath.Dir(targetDir)} {
-		fileInfo, err := os.Stat(path)
-		if err != nil {
-			return err
-		}
-
-		if fileInfo.Size() < int64(expectedSize) {
-			return fmt.Errorf(
-				"not enough free disk space to download the file. The expected file size is: %d MB. The target location %s only has %d MB free disk space",
-				expectedSize/1000000, targetDir, fileInfo.Size()/1000000,
-			)
-		}
-	}
-
-	if _, err := os.Stat(targetDir); os.IsNotExist(err) {
-		return fmt.Errorf("targetDir %s does not exist", targetDir)
-	}
-
-	return nil
-}
-
-func commonPath(path1, path2 string) string {
-	dir1 := strings.Split(filepath.Clean(path1), string(filepath.Separator))
-	dir2 := strings.Split(filepath.Clean(path2), string(filepath.Separator))
-
-	var commonParts []string
-	for i := 0; i < len(dir1) && i < len(dir2); i++ {
-		if dir1[i] == dir2[i] {
-			commonParts = append(commonParts, dir1[i])
-		} else {
-			break
-		}
-	}
-
-	return filepath.Join(commonParts...)
-}
-
-func createSymlink(src string, dst string, newBlob bool) error {
-	relativeSrc, err := filepath.Rel(filepath.Dir(dst), src)
-	if err != nil {
-		relativeSrc = ""
-		return err
-	}
-
-	commonPath := commonPath(src, dst)
-
-	supportSymlinks, err := IsSymlinkSupported(commonPath)
-	if err != nil {
-		if errors.Is(err, os.ErrPermission) {
-			supportSymlinks, err = IsSymlinkSupported(src)
-			if err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-
-	if supportSymlinks {
-		srcRelOrAbs := relativeSrc
-
-		err := os.Symlink(srcRelOrAbs, dst)
-		if err != nil {
-			if errors.Is(err, os.ErrExist) {
-				// if os.PathIsSymlink(dst) && os.Readlink(dst) == src {
-				// 	// `dst` already exists and is a symlink to the `src` blob. It is most likely that the file has
-				// 	// been cached twice concurrently (exactly between `os.remove` and `os.symlink`). Do nothing.
-				// 	return nil
-				// } else {
-				// 	// Very unlikely to happen. Means a file `dst` has been created exactly between `os.remove` and
-				// 	// `os.symlink` and is not a symlink to the `src` blob file. Raise exception.
-				// 	return err
-				// }
-
-				return nil
-			} else {
-				if newBlob {
-					err := os.Rename(src, dst)
-					if err != nil {
-						copyNoMatterWhat(src, dst)
-					}
-				} else {
-					copyNoMatterWhat(src, dst)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func normalizeETag(etag string) string {
-	etag = strings.TrimPrefix(strings.TrimSpace(etag), "W/")
-	etag = strings.Trim(etag, "\"")
-
-	return etag
 }
 
 func repoFolderName(repoId string, repoType string) string {
@@ -534,11 +362,6 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 	}
 
 	repoFolderName := repoFolderName(repoId, repoType)
-	// absCacheDir, err := filepath.Abs(client.CacheDir)
-	// if err != nil {
-	// 	return "", err
-	// }
-
 	storageFolder := filepath.Join(client.CacheDir, repoFolderName)
 	err := os.MkdirAll(storageFolder, os.ModePerm)
 	if err != nil {
@@ -560,65 +383,66 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 		}
 	}
 
-	headers := map[string]string{"User-Agent": client.UserAgent}
+	headers := &http.Header{}
+	headers.Set("User-Aget", client.UserAgent)
+
 	params := map[string]string{
-		"Endpoint": Endpoint,
+		"Endpoint": client.Endpoint,
 		"RepoId":   repoId,
 		"Revision": revision,
 		"Filename": fileName,
 	}
-	hfUrl, err := formatHfUrl(params)
+	hfResolveUrl, err := formatUrl(hfResolveUrlTemplate, params)
 	if err != nil {
 		return "", err
 	}
 
-	fileMetadata, err := getFileMetadata(hfUrl, headers)
+	fileMetadata, err := getFileMetadata(hfResolveUrl, headers)
+	if err != nil {
+		if strings.Contains(err.Error(), "EntryNotFound") {
+			if fileMetadata != nil && fileMetadata.CommitHash != "" {
+				noExistPath := filepath.Join(storageFolder, ".no_exist", fileMetadata.CommitHash)
+				os.MkdirAll(noExistPath, os.ModePerm)
+
+				noExistFilePath := filepath.Join(noExistPath, fileName)
+				os.Create(noExistFilePath)
+				cacheCommitHashForSpecificRevision(storageFolder, revision, fileMetadata.CommitHash)
+			}
+		}
+
+		return "", err
+	}
+
 	if fileMetadata == nil {
 		return "", fmt.Errorf("error while retrieving file metadata: %s", err)
 	}
 
 	if fileMetadata.CommitHash == "" {
-		url := fmt.Sprintf("https://huggingface.co/api/models/%s", repoId)
-
-		response, err := requestWrapper("GET", url, true, headers)
-		if err != nil {
-			return "", err
-		}
-		defer response.Body.Close()
-
-		var data map[string]interface{}
-		err = json.NewDecoder(response.Body).Decode(&data)
-		if err != nil {
-			return "", err
-		}
-
-		fileMetadata.CommitHash = data["sha"].(string)
-
-		fmt.Println("No commit hash found for this file. It is likely that the file is not yet available on HF Hub.")
+		return "", fmt.Errorf("no commit hash found for this file. It is likely that the file is not yet available on HF Hub")
 	}
 
 	if fileMetadata.ETag == "" {
-		fmt.Println("No ETag found for this file. It is likely that the file is not yet available on HF Hub.")
+		return "", fmt.Errorf("no ETag found for this file. It is likely that the file is not yet available on HF Hub")
 	}
 
 	if fileMetadata.Size == 0 {
-		fmt.Println("No size found for this file. It is likely that the file is not yet available on HF Hub.")
+		return "", fmt.Errorf("no size found for this file. It is likely that the file is not yet available on HF Hub")
 	}
 
-	if fileMetadata.Location != hfUrl {
+	if fileMetadata.Location != hfResolveUrl {
 		parsedLocation, err := url.Parse(fileMetadata.Location)
 		if err != nil {
 			return "", err
 		}
 
-		parsedHfUrl, err := url.Parse(hfUrl)
+		parsedHfUrl, err := url.Parse(hfResolveUrl)
 		if err != nil {
 			return "", err
 		}
 
 		if parsedLocation.Host != parsedHfUrl.Host {
 			// Remove authorization header when downloading a LFS blob
-			delete(headers, "authorization")
+			headers.Del("authorization")
 		}
 	}
 
@@ -691,7 +515,26 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 	destinationPath := blobPath
 	// destinationPath := filepath.Join(cacheDir, repoFolderName, fileName)
 
-	err = downloadToTmpAndMove(incompletePath, destinationPath, hfUrl, headers, fileMetadata.Size, fileName, forceDownload)
+	lockFolder := filepath.Join(storageFolder, ".locks")
+	err = os.MkdirAll(lockFolder, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+
+	lockPath := filepath.Join(lockFolder, fmt.Sprintf("%s.lock", fileMetadata.ETag))
+	lock := flock.New(lockPath)
+	locked, err := lock.TryLock()
+	if err != nil {
+		return "", err
+	}
+
+	if !locked {
+		return "", fmt.Errorf("failed to acquire lock for %s", fileMetadata.ETag)
+	}
+
+	defer lock.Unlock()
+
+	err = downloadToTmpAndMove(incompletePath, destinationPath, hfResolveUrl, headers, fileMetadata.Size, fileName, forceDownload)
 	if err != nil {
 		return "", err
 	}
@@ -700,11 +543,21 @@ func fileDownload(client *HFClient, file *HfFile, forceDownload bool, localFiles
 	return pointerPath, nil
 }
 
-func getFileMetadata(url string, headers map[string]string) (*HfFileMetadata, error) {
-	headers["User-Agent"] = DefaultUserAgent
-	headers["Accept-Encoding"] = "identity"
+func getFileMetadata(url string, headers *http.Header) (*HfFileMetadata, error) {
+	headers.Set("Accept-Encoding", "identity")
+	response, err := requestWrapper("HEAD", url, false, true, headers)
 
-	response, err := requestWrapper("HEAD", url, true, headers)
+	if response.StatusCode >= 400 {
+		m := &HfFileMetadata{
+			CommitHash: response.Header.Get("X-Repo-Commit"),
+		}
+
+		errorCode := response.Header.Get("X-Error-Code")
+		errorTemplate := "error while retrieving file metadata from %s due to %s"
+		return m, fmt.Errorf(errorTemplate, url, errorCode)
+	}
+
+	fmt.Println(response.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -712,14 +565,10 @@ func getFileMetadata(url string, headers map[string]string) (*HfFileMetadata, er
 
 	commitHash := response.Header.Get("X-Repo-Commit")
 
-	fmt.Println("commitHash>>", commitHash)
-
 	etag := response.Header.Get("X-Linked-Etag")
 	if etag == "" {
 		etag = response.Header.Get("ETag")
 	}
-
-	fmt.Println("etag>>", etag)
 
 	sizeStr := response.Header.Get("X-Linked-Size")
 	if sizeStr == "" {
