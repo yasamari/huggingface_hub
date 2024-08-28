@@ -11,15 +11,15 @@ import (
 )
 
 func main() {
-	client := hub.DefaultClient().WithCacheDir("./models")
+	client := hub.DefaultClient()
 	repo := hub.NewRepo("black-forest-labs/FLUX.1-schnell")
+	params := &hub.DownloadParams{Repo: repo, FileName: "config.json",}
 
-	params := &hub.DownloadParams{Repo: repo}
-	// can pa
 	path, err := client.Download(params)
 	if err != nil {
 		log.Println(err)
 	}
 
 	fmt.Println(path)
+
 }

@@ -14,10 +14,6 @@
 # Go workspace file
 go.work
 
-# Temporary directories
-/tmp/
-/python/venv/
-
 # Compiled Object files, Static and Dynamic libs (Shared Objects)
 *.o
 *.a
@@ -27,7 +23,3 @@ go.work
 
 # OS-specific files
 .DS_Store
-Thumbs.db
-
-*x.py
-models

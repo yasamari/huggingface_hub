@@ -1,234 +1,156 @@
-Interfaces from Hugging Face Model Hub that we're using currently:
+## HF Hub Client
 
-- function `hf_hub_download`; downloads a single specified file:
+This is a client for the Hugging Face Hub. It allows you to download files from the Hub, and also to download specific revisions of a repo.
 
-```py
-def hf_hub_download(
-    repo_id: str,
-    filename: str,
-    *,
-    subfolder: Optional[str] = None,
-    repo_type: Optional[str] = None,
-    revision: Optional[str] = None,
-    library_name: Optional[str] = None,
-    library_version: Optional[str] = None,
-    cache_dir: Union[str, Path, None] = None,
-    local_dir: Union[str, Path, None] = None,
-    user_agent: Union[Dict, str, None] = None,
-    force_download: bool = False,
-    proxies: Optional[Dict] = None,
-    etag_timeout: float = DEFAULT_ETAG_TIMEOUT,
-    token: Union[bool, str, None] = None,
-    local_files_only: bool = False,
-    headers: Optional[Dict[str, str]] = None,
-    endpoint: Optional[str] = None,
-    # Deprecated args
-    legacy_cache_layout: bool = False,
-    resume_download: Optional[bool] = None,
-    force_filename: Optional[str] = None,
-    local_dir_use_symlinks: Union[bool, Literal["auto"]] = "auto",
-) -> str:
+It aims to be a drop-in replacement for the original `huggingface_hub` python package, meaning that any model you can download using the python package, you can download using this client and vice versa.
+
+### Requirements
+
+- Go 1.22+
+
+### Installation
+
+```bash
+go get github.com/cozy-creator/hf-hub
 ```
 
-However these arguments are sufficient:
+### Usage
 
-```py
-repo_id,
-file_name,
-subfolder,
-cache_dir,
+#### Initializing the Client
+
+You can initialize the client in two ways, either by using the default client or by creating a new client.
+
+##### Default Client
+
+The default client is initialized by calling the `DefaultClient` function, which returns a client that is configured to use the default Hugging Face Hub endpoint and cache directory.
+
+example:
+```go
+client := hub.DefaultClient()
 ```
 
-- `snapshot_download`; used to download the entire repo (all files), but we're using an include pattern to only download a single sub-folder, rather than the entire repo:
+##### Custom Client
 
-```py
-def snapshot_download(
-    repo_id: str,
-    *,
-    repo_type: Optional[str] = None,
-    revision: Optional[str] = None,
-    cache_dir: Union[str, Path, None] = None,
-    local_dir: Union[str, Path, None] = None,
-    library_name: Optional[str] = None,
-    library_version: Optional[str] = None,
-    user_agent: Optional[Union[Dict, str]] = None,
-    proxies: Optional[Dict] = None,
-    etag_timeout: float = DEFAULT_ETAG_TIMEOUT,
-    force_download: bool = False,
-    token: Optional[Union[bool, str]] = None,
-    local_files_only: bool = False,
-    allow_patterns: Optional[Union[List[str], str]] = None,
-    ignore_patterns: Optional[Union[List[str], str]] = None,
-    max_workers: int = 8,
-    tqdm_class: Optional[base_tqdm] = None,
-    headers: Optional[Dict[str, str]] = None,
-    endpoint: Optional[str] = None,
-    # Deprecated args
-    local_dir_use_symlinks: Union[bool, Literal["auto"]] = "auto",
-    resume_download: Optional[bool] = None,
-) -> str:
+You can also create a custom client by specifying the endpoint, token, and cache directory:
+
+```go
+client := hub.NewClient("https://huggingface.co", "your-token", "./models")
 ```
 
-'Allow pattern' and 'ignore pattern' are the useful parts here.
+##### Customizing the Client
+The client has several methods that allow you to customize its behavior. These methods are:
 
-- `scan_cache_dir`; used to get info about what repos we already have available:
+The `WithCacheDir` method allows you to change or specify the directory where the client will store the downloaded files.
 
-```py
-def scan_cache_dir(cache_dir: Optional[Union[str, Path]] = None) -> HFCacheInfo:
-	pass
-
-class HFCacheInfo:
-    size_on_disk: int
-    repos: FrozenSet[CachedRepoInfo]
-    warnings: List[CorruptedCacheException]
-
-	def delete_revisions(self, *revisions: str) -> DeleteCacheStrategy:
-		pass
-
-@dataclass(frozen=True)
-class CachedRepoInfo:
-    repo_id: str
-    repo_type: REPO_TYPE_T
-    repo_path: Path
-    size_on_disk: int
-    nb_files: int
-    revisions: FrozenSet[CachedRevisionInfo]
-    last_accessed: float
-    last_modified: float
+example:
+```go
+client := hub.DefaultClient().WithCacheDir("./models")
 ```
 
-However, all we're doing with this CachedRepoInfo is looking through every repo-id and then seeing if they're downloaded using custom-logic that should have been written into the library by default.
-
-- repo_folder_name function (trivial):
-
-```py
-def repo_folder_name(*, repo_id: str, repo_type: str) -> str:
-    """Return a serialized version of a hf.co repo name and type, safe for disk storage
-    as a single non-nested folder.
-
-    Example: models--julien-c--EsperBERTo-small
-    """
-    # remove all `/` occurrences to correctly convert repo to directory name
-    parts = [f"{repo_type}s", *repo_id.split("/")]
-    return REPO_ID_SEPARATOR.join(parts)
+The `WithEndpoint` method allows you to change or specify the endpoint.
+```go
+client := hub.DefaultClient().WithEndpoint("https://huggingface.co")
 ```
 
-- class `HFApi`:
-
-```py
-class HfApi:
-    def __init__(
-        self,
-        endpoint: Optional[str] = None,
-        token: Union[str, bool, None] = None,
-        library_name: Optional[str] = None,
-        library_version: Optional[str] = None,
-        user_agent: Union[Dict, str, None] = None,
-        headers: Optional[Dict[str, str]] = None,
-    ) -> None:
-		pass
-
-    def list_models(
-        self,
-        *,
-        filter: Union[ModelFilter, str, Iterable[str], None] = None,
-        author: Optional[str] = None,
-        library: Optional[Union[str, List[str]]] = None,
-        language: Optional[Union[str, List[str]]] = None,
-        model_name: Optional[str] = None,
-        task: Optional[Union[str, List[str]]] = None,
-        trained_dataset: Optional[Union[str, List[str]]] = None,
-        tags: Optional[Union[str, List[str]]] = None,
-        search: Optional[str] = None,
-        emissions_thresholds: Optional[Tuple[float, float]] = None,
-        sort: Union[Literal["last_modified"], str, None] = None,
-        direction: Optional[Literal[-1]] = None,
-        limit: Optional[int] = None,
-        full: Optional[bool] = None,
-        cardData: bool = False,
-        fetch_config: bool = False,
-        token: Union[bool, str, None] = None,
-        pipeline_tag: Optional[str] = None,
-    ) -> Iterable[ModelInfo]:
+The `WithToken` method allows you to change or specify the huggingface token.
+```go
+client := hub.DefaultClient().WithToken("your-token")
 ```
 
-It has many methods, but we're only using its `list_models` method so far, which actually does nothing important right now (the client can query for available diffusers models) so honestly we don't even need this at all right now.
+#### Downloading a repo
 
-### How We Want to Design this Library:
+The `Download` method allows you to download a model from the Hugging Face Hub. It takes a `DownloadParams` object as an argument, and returns the path to the downloaded repo snapshot.
 
-There are a few things we want to add which were missing in the original huggingface-hub python package. Honestly, with the exception of `hf_hub_download`, which is a general-purpose single-file downloader, we don't need any of these classes or methods at all.
+example:
+```go
+client := hub.DefaultClient()
+repo := hub.NewRepo("black-forest-labs/FLUX.1-schnell")
+params := &hub.DownloadParams{Repo: repo}
 
-Honestly, all we want to do is be able to (1) see what models are available locally already, and (2) download diffusers models from repos, but only the files that we actually need. We can create some function like:
+path, err := client.Download(params)
+if err != nil {
+	log.Println(err)
+  os.Exit(1)
+}
 
-```py
-def download_diffusers_pipeline(
-	repo_id: str,
-	*,
-	revision: str,
-	model_index: str,
-	components: dict[str, dict[str, str]]
-) -> None:
-	pass
-```
-The arguments, in a config.yml file, would look something like this:
-
-```yaml
-repo_id: CompVis/stable-diffusion-v1-4
-revision: main
-model_index: path/to/model-index.json # overwrites base_repo's model-index file if specified
-
-components:
-  # unspecified components will use the base_repo as a source
-  # otherwise:
-  text_encoder:
-    # because a folder is specified, rather than a single file, we download just
-    # the files we need, which in this case is just config.json and model.fp16.safetensors
-    hf_repo: stabilityai/stable-diffusion-xl-base-1.0/text_encoder
-    dtype: fp16
-	filetype: safetensors
-    revision: main
-  vae:
-    # we specify a list of individual files contained in the same repo / folder
-    source:
-      - stabilityai/stable-diffusion-xl-base-1.0/vae/diffusion_pytorch_model.fp16.safetensors
-      - stabilityai/stable-diffusion-xl-base-1.0/vae/config.json
-    revision: main
-  unet:
-    local_path: /path/to/local/unet
-  transformer:
-    urls:
-      1234.safetensors: https://civitai.com/models/1234.safetensors
-      config.json: https://civitai.com/models/1234.json
+fmt.Println(`Repo downloaded to: `, path)
 ```
 
-Given how complex this components type is, we may want to create a class (struct) in order to represent all of this
 
-- `is_available_locally(repo-id): bool` function; some way of telling if we have sufficient files available locally. This would ensure that we have all the files necessary:
+#### Downloading a File
 
-```py
-def is_available_locally(
-	repo_id: str,
-	*,
-	revision: str,
-	components: dict[str, dict[str, str]]
-) -> None:
-	pass
+You also have the option to download a single file from a repo. This is done by calling the `Download` method on the `DownloadParams` object, but with the `FileName` field set to the name of the file you want to download.
+
+example:
+```go
+client := hub.DefaultClient()
+repo := hub.NewRepo("black-forest-labs/FLUX.1-schnell")
+params := &hub.DownloadParams{
+  Repo: repo, 
+  FileName: "flux1-schnell.safetensors",
+}
+
+path, err := client.Download(params)
+if err != nil {
+	log.Println(err)
+  os.Exit(1)
+}
+
+fmt.Println(`File downloaded to: `, path)
 ```
 
-Interestingly, in workflow files, for these diffusers-pipeline definitions, we could expliclity provide the above information, or we could link to it in a yaml file. For example, ex: `cozy-creator/diffusers-pipe-defs/flux-fp8.yaml` would be a link to a diffusers-pipeline file on hugigng face in our own organization.
+You can also specify a sub-folder to download, by setting the `SubFolder` field of the `DownloadParams` object.
 
-I like using the term `diffusers pipeline` because it's more specific than just 'model'.
+example:
+```go
+client := hub.DefaultClient()
+repo := hub.NewRepo("black-forest-labs/FLUX.1-schnell")
+params := &hub.DownloadParams{
+  Repo: repo, 
+  FileName: "diffusion_pytorch_model.safetensors",
+  SubFolder: "vae",
+}
 
-- Note that we also want to provide progress-bars to clients as files are downloaded, so we can report what files are being downloaded and how long it'll be until they're complete.
+path, err := client.Download(params)
+if err != nil {
+	log.Println(err)
+  os.Exit(1)
+}
 
-- We'll also want to specify file-types, specifically onnx versus safetensors mostly, in addition to dtypes. (I don't think we'll be using pickle-files.)
+fmt.Println(`File downloaded to: `, path)
+```
 
-- Note that a significant issue is that diffusers doesn't have sym-linking of components between repos, meaning that a single T5XXLEncoder might get downloaded multiple times, one for each repo.
+#### Downloading a Repo Revision
 
-### References:
+You can also specify a specific revision of a repo to download. This is done by calling the `WithRevision` method on the `Repo` object, and passing the revision you want to download.
 
-* [huggingface_hub](https://github.com/huggingface/huggingface_hub)
-* [hf-hub](https://github.com/huggingface/hf-hub)
+example:
+```go
+client := hub.DefaultClient()
+// this revision could also be a branch name, or a commit hash
+repo := hub.NewRepo("black-forest-labs/FLUX.1-schnell").WithRevision("main")
+params := &hub.DownloadParams{Repo: repo}
 
-Golang adaptation was originally forked from [seasonjs/hf-hub](https://github.com/seasonjs/hf-hub)
+path, err := client.Download(params)
+if err != nil {
+	log.Println(err)
+  os.Exit(1)
+}
 
+fmt.Println(`Repo downloaded to: `, path)
+```
+
+### Contributing
+
+Contributions are welcome! This is still in early development, so there are likely to be some rough edges.
+If you find a bug or have a suggestion, please open an issue or submit a pull request.
+
+### Acknowledgements
+
+This project was inspired by the [huggingface_hub](https://github.com/huggingface/huggingface_hub) python package, and the [hf-hub](https://github.com/huggingface/hf-hub) rust crate.
+
+Also, thanks to [seasonjs](https://github.com/seasonjs) for the original [hf-hub](https://github.com/huggingface/hf-hub) golang package before we did a complete rewrite.
+
+### License
+
+MIT
