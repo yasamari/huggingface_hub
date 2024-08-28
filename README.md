@@ -149,7 +149,7 @@ If you find a bug or have a suggestion, please open an issue or submit a pull re
 
 This project was inspired by the [huggingface_hub](https://github.com/huggingface/huggingface_hub) python package, and the [hf-hub](https://github.com/huggingface/hf-hub) rust crate.
 
-Also, thanks to [seasonjs](https://github.com/seasonjs) for the original [hf-hub](https://github.com/huggingface/hf-hub) golang package before we did a complete rewrite.
+Also, thanks to [seasonjs](https://github.com/seasonjs) for the original [hf-hub](https://github.com/seasonjs/hf-hub) golang package before we did a complete rewrite.
 
 ### License
 
