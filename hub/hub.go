@@ -3,6 +3,7 @@ package hub
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -37,7 +38,7 @@ type ModelInfoSibling struct {
 
 const (
 	DefaultRevision  = "main"
-	DefaultCacheDir  = "/tmp/cozy-hub-cache"
+	DefaultCacheDir  = "~/.cache/huggingface/hub"
 	DefaultUserAgent = "unknown/None; hf-hub/0.0.1"
 )
 
@@ -100,6 +101,11 @@ func init() {
 }
 
 func NewClient(endpoint string, token string, cacheDir string) *Client {
+	cacheDir, err := expandPath(cacheDir)
+	if err != nil {
+		panic(err)
+	}
+	
 	return &Client{
 		Endpoint: endpoint,
 		Token:    token,
@@ -108,9 +114,34 @@ func NewClient(endpoint string, token string, cacheDir string) *Client {
 }
 
 func DefaultClient() *Client {
+	cacheDir := os.Getenv("XDG_CACHE_HOME")
+	if cacheDir != "" {
+		cacheDir = filepath.Join(cacheDir, "huggingface")
+	}
+
+	if cacheDir == "" {
+		cacheDir = os.Getenv("HF_HUB_CACHE")
+	}
+
+	if cacheDir == "" {
+		cacheDir = os.Getenv("HF_HOME")
+		if cacheDir != "" {
+			cacheDir = filepath.Join(cacheDir, "hub")
+		}
+	}
+
+	if cacheDir == "" {
+		cacheDir = DefaultCacheDir
+	}
+
+	cacheDir, err := expandPath(cacheDir)
+	if err != nil {
+		panic(err)
+	}
+
 	return &Client{
 		Endpoint:  HFEndpoint,
-		CacheDir:  DefaultCacheDir,
+		CacheDir:  cacheDir,
 		UserAgent: DefaultUserAgent,
 	}
 }

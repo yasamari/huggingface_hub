@@ -2,6 +2,7 @@ package hub
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -168,4 +169,32 @@ func mustCopy(src string, dst string) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func expandPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+
+	if !strings.HasPrefix(path, "~") {
+		return filepath.Clean(path), nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	if path == "~" {
+		return homeDir, nil
+	}
+
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(homeDir, path[2:])
+	} else {
+		// Handle cases like ~user/path
+		return "", fmt.Errorf("expanding paths with ~username is not supported")
+	}
+
+	return filepath.Clean(path), nil
 }
