@@ -6,39 +6,32 @@ import (
 	"strconv"
 )
 
-type HFClient struct {
+type Client struct {
 	Endpoint  string
 	Token     string
 	CacheDir  string
 	UserAgent string
 }
 
-type HfRepo struct {
+type Repo struct {
 	Id       string
 	Type     string
 	Revision string
 }
 
-type HfFile struct {
-	FileName  string
-	SubFolder string
-	Revision  string
-	Repo      *HfRepo
-}
-
-type HfFileMetadata struct {
+type FileMetadata struct {
 	CommitHash string
 	ETag       string
 	Location   string
 	Size       int
 }
 
-type HFModelInfo struct {
-	Sha      string               `json:"sha"`
-	Siblings []HFModelInfoSibling `json:"siblings"`
+type ModelInfo struct {
+	Sha      string             `json:"sha"`
+	Siblings []ModelInfoSibling `json:"siblings"`
 }
 
-type HFModelInfoSibling struct {
+type ModelInfoSibling struct {
 	RFileName string `json:"rfilename"`
 }
 
@@ -81,6 +74,15 @@ var RepoTypesUrlPrefixes = map[string]string{
 
 var symlinkSupported map[string]bool
 
+type DownloadParams struct {
+	Repo           *Repo
+	FileName       string
+	SubFolder      string
+	Revision       string
+	ForceDownload  bool
+	LocalFilesOnly bool
+}
+
 func init() {
 	isStaging, err := strconv.ParseBool(os.Getenv("HUGGINGFACE_CO_STAGING"))
 	if err != nil {
@@ -97,97 +99,83 @@ func init() {
 	}
 }
 
-func NewHFClient(endpoint string, token string, cacheDir string) *HFClient {
-	return &HFClient{
+func NewClient(endpoint string, token string, cacheDir string) *Client {
+	return &Client{
 		Endpoint: endpoint,
 		Token:    token,
 		CacheDir: cacheDir,
 	}
 }
 
-func DefaultClient() *HFClient {
-	return &HFClient{
+func DefaultClient() *Client {
+	return &Client{
 		Endpoint:  HFEndpoint,
 		CacheDir:  DefaultCacheDir,
 		UserAgent: DefaultUserAgent,
 	}
 }
 
-func (r *HfRepo) File(fileName string) *HfFile {
-	return &HfFile{
-		Repo:     r,
-		FileName: fileName,
-		Revision: r.Revision,
-	}
-}
-
-func NewHfRepo(repoId string) *HfRepo {
-	return &HfRepo{
+func NewRepo(repoId string) *Repo {
+	return &Repo{
 		Id:       repoId,
 		Type:     ModelRepoType,
 		Revision: DefaultRevision,
 	}
 }
 
-func (r *HfRepo) WithRevision(revision string) *HfRepo {
+func (r *Repo) WithRevision(revision string) *Repo {
 	r.Revision = revision
 	return r
 }
 
-func (r *HfRepo) WithType(repoType string) *HfRepo {
+func (r *Repo) WithType(repoType string) *Repo {
 	r.Type = repoType
 	return r
 }
 
-func (f *HfFile) WithSubFolder(subFolder string) *HfFile {
-	f.SubFolder = subFolder
-	return f
-}
-
-func (f *HfFile) WithRepo(repo *HfRepo) *HfFile {
-	f.Repo = repo
-	f.Revision = repo.Revision
-	return f
-}
-
-func (client *HFClient) WithCacheDir(cacheDir string) *HFClient {
+func (client *Client) WithCacheDir(cacheDir string) *Client {
 	client.CacheDir = cacheDir
 	return client
 }
 
-func (client *HFClient) WithEndpoint(endpoint string) *HFClient {
+func (client *Client) WithEndpoint(endpoint string) *Client {
 	client.Endpoint = endpoint
 	return client
 }
 
-func (client *HFClient) WithToken(token string) *HFClient {
+func (client *Client) WithToken(token string) *Client {
 	client.Token = token
 	return client
 }
 
-func (client *HFClient) WithUserAgent(userAgent string) *HFClient {
+func (client *Client) WithUserAgent(userAgent string) *Client {
 	client.UserAgent = userAgent
 	return client
 }
 
-func (client *HFClient) FileDownload(file *HfFile, forceDownload bool, localFilesOnly bool) (string, error) {
-	if file.Revision == "" {
-		file.Revision = DefaultRevision
+func (client *Client) Download(params *DownloadParams) (string, error) {
+	if params.Repo.Type == "" {
+		params.Repo.Type = ModelRepoType
 	}
-	if file.Repo.Type == "" {
-		file.Repo.Type = ModelRepoType
+
+	if params.Repo.Revision == "" {
+		params.Repo.Revision = DefaultRevision
 	}
+
+	if params.Revision == "" {
+		params.Revision = params.Repo.Revision
+	}
+
 	if client.CacheDir == "" {
 		client.CacheDir = DefaultCacheDir
 	}
 
-	return fileDownload(client, file, forceDownload, localFilesOnly)
-}
-
-func (client *HFClient) SnapshotDownload(repo *HfRepo, forceDownload bool, localFilesOnly bool) (string, error) {
-	if repo.Type != ModelRepoType {
-		return "", fmt.Errorf("invalid repo type: %s", repo.Type)
+	if params.FileName == "" {
+		return fileDownload(client, params)
+	} else {
+		if params.Repo.Type != ModelRepoType {
+			return "", fmt.Errorf("invalid repo type: %s", params.Repo.Type)
+		}
+		return snapshotDownload(client, params)
 	}
-
-	return snapshotDownload(client, repo, forceDownload, localFilesOnly)
 }
