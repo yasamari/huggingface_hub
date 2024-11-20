@@ -99,7 +99,15 @@ func commonPath(path1, path2 string) string {
 		}
 	}
 
-	return filepath.Join(commonParts...)
+	if len(commonParts) == 0 {
+		return ""
+	}
+
+	commonPath := filepath.Join(commonParts...)
+	if commonParts[0] == "" {
+		commonPath = string(filepath.Separator) + commonPath
+	}
+	return commonPath
 }
 
 func createSymlink(src string, dst string, newBlob bool) error {
