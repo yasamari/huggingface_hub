@@ -105,7 +105,7 @@ func NewClient(endpoint string, token string, cacheDir string) *Client {
 	if err != nil {
 		panic(err)
 	}
-	
+
 	return &Client{
 		Endpoint: endpoint,
 		Token:    token,
@@ -202,11 +202,11 @@ func (client *Client) Download(params *DownloadParams) (string, error) {
 	}
 
 	if params.FileName == "" {
-		return fileDownload(client, params)
-	} else {
 		if params.Repo.Type != ModelRepoType {
 			return "", fmt.Errorf("invalid repo type: %s", params.Repo.Type)
 		}
 		return snapshotDownload(client, params)
+	} else {
+		return fileDownload(client, params)
 	}
 }
