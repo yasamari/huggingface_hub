@@ -356,6 +356,7 @@ func fileDownload(client *Client, params *DownloadParams) (string, error) {
 
 	headers := &http.Header{}
 	headers.Set("User-Aget", client.UserAgent)
+	headers.Set("Authorization", fmt.Sprintf("Bearer %s", client.Token))
 
 	urlParams := map[string]string{
 		"Endpoint": client.Endpoint,
@@ -398,23 +399,6 @@ func fileDownload(client *Client, params *DownloadParams) (string, error) {
 
 	if fileMetadata.Size == 0 {
 		return "", fmt.Errorf("no size found for this file. It is likely that the file is not yet available on HF Hub")
-	}
-
-	if fileMetadata.Location != hfResolveUrl {
-		parsedLocation, err := url.Parse(fileMetadata.Location)
-		if err != nil {
-			return "", err
-		}
-
-		parsedHfUrl, err := url.Parse(hfResolveUrl)
-		if err != nil {
-			return "", err
-		}
-
-		if parsedLocation.Host != parsedHfUrl.Host {
-			// Remove authorization header when downloading a LFS blob
-			headers.Del("authorization")
-		}
 	}
 
 	if !(params.LocalFilesOnly || fileMetadata.ETag != "") {
